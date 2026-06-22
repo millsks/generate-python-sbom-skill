@@ -31,6 +31,286 @@ Reference files in `references/`:
 
 ---
 
+## Quick Reference
+
+Read this section first when resuming mid-execution after context compaction. All persistent state, the cleanup trap, and key commands per step are consolidated here — so execution can continue from any step without re-reading the full document.
+
+### State Variables
+
+| Variable | Set In | Description |
+|---|---|---|
+| `PROJECT_ROOT` | Arguments | Absolute path to the Python project being analyzed |
+| `FORMAT` | Arguments | Output format: `json` or `xml` (default: `json`) |
+| `OUTPUT_BASE` | Arguments | Base path for SBOM output (default: `${PROJECT_ROOT}/sbom.cyclonedx`) |
+| `ENV_FILTER` | Arguments | For Pixi/conda: one named environment; empty = all environments |
+| `INCLUDE_DEV` | Arguments | `true`/`false` — whether to include dev/test dependency groups |
+| `PKG_MANAGER` | Step 1 | Detected manager: `pixi`, `uv`, `conda`, or `pip` |
+| `TEMP_DIR` | Step 1b | Temp directory for all bootstrapped tools; deleted on EXIT via trap |
+| `SBOM_PYTHON` | Step 1b | Bootstrapped Python binary used for all generation scripts |
+| `BOOTSTRAPPED_TOOLS` | Step 1b | Array of tools installed this run (listed in Step 6 report) |
+| `CONDA_TEMP_PREFIXES` | Step 1b / 5a-pre | Conda env prefixes created this run; removed after each SBOM is written |
+| `DIRECT_DEPS` | Step 2 | Normalized direct dependency names from manifest file(s) |
+| `CONDA_ENV_FILES` | Step 2 | Array of `{yaml_path, name, direct_names}` for conda projects |
+| `ENV_LIST` | Step 4 | Ordered `{name, query_spec}` pairs — one SBOM generated per entry |
+
+### Cleanup Trap
+
+Register immediately after `TEMP_DIR` is created in Step 1b. This fires on EXIT, INT, TERM, and QUIT — the primary guarantee that TEMP_DIR is never left behind.
+
+```bash
+_sbom_cleanup() {
+  for _prefix in "${CONDA_TEMP_PREFIXES[@]:-}"; do
+    [ -n "${_prefix}" ] && [ -d "${_prefix}" ] && rm -rf "${_prefix}"
+  done
+  [ -n "${TEMP_DIR}" ] && [ -d "${TEMP_DIR}" ] && rm -rf "${TEMP_DIR}"
+}
+trap '_sbom_cleanup' EXIT INT TERM QUIT
+```
+
+### Critical Commands at a Glance
+
+| Step | Command |
+|---|---|
+| 1 — detect manifests | `ls "${PROJECT_ROOT}/pixi.toml" ... 2>/dev/null && which pixi uv conda pip python3 2>/dev/null` |
+| 1b — janitor | `find "${TMPDIR:-/tmp}" -maxdepth 1 -name "sbom-bootstrap.*" -type d -mmin +60 2>/dev/null \| xargs rm -rf 2>/dev/null \|\| true` |
+| 1b — create TEMP_DIR | `TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sbom-bootstrap.XXXXXX")` |
+| 1b — install CycloneDX | `"${SBOM_PYTHON}" -m pip install --quiet cyclonedx-bom` |
+| 1b — prepend PATH | `export PATH="${TEMP_DIR}/uv/bin:${TEMP_DIR}/pixi/bin:${TEMP_DIR}/conda/bin:${PATH}"` |
+| 3 — verify tooling | `"${SBOM_PYTHON}" -c "import cyclonedx; print('cyclonedx-bom', cyclonedx.__version__)"` |
+| 5a — query pip/uv | `"${TEMP_DIR}/venv/bin/pip" list --format json` |
+| 5a — query conda | `conda list --prefix "${CONDA_ENV_PREFIX}" --json` |
+| 5a — query pixi | `pixi list --json --environment "${ENV_NAME}" --manifest-path "${PROJECT_ROOT}/pixi.toml"` |
+| 5c — verify output | `test -s "${OUTPUT}" && echo "OK: ${OUTPUT}" \|\| echo "ERROR: ${OUTPUT} is empty or missing"` |
+| 7b — final cleanup | `rm -rf "${TEMP_DIR}"; unset TEMP_DIR` |
+
+### Step Sequence
+
+```
+Step 1    → Detect package manager (manifest files + available tools on PATH)
+Step 1b   → Bootstrap tools to TEMP_DIR; register cleanup trap; install cyclonedx-bom
+Step 2    → Extract DIRECT_DEPS from manifest(s); populate CONDA_ENV_FILES for conda
+Step 3    → Verify cyclonedx-bom is importable from SBOM_PYTHON
+Step 4    → Build ENV_LIST (one entry per environment to process)
+Step 5    → For each ENV_LIST entry: query packages → generate SBOM → verify → remove conda prefix
+Step 6    → Report summary (paths, component counts, bootstrapped tools, validation command)
+Step 7    → Explicit TEMP_DIR removal (trap also fires automatically on process exit)
+```
+
+---
+
+## Generation Script
+
+The Strategy B/C unified script — used for **all JSON output** (the default format) and as the XML fallback when Strategy A does not apply. This is the only script needed to complete Step 5b; keep it accessible after any context compaction event.
+
+**Invocation (Step 5b):** write the script to `${TEMP_DIR}/generate_sbom.py` using an unquoted heredoc so bash substitutes the template variables, then run with `${SBOM_PYTHON}`:
+
+```bash
+cat > "${TEMP_DIR}/generate_sbom.py" << PYEOF
+"""CycloneDX SBOM generator — Strategy B (cyclonedx-python-lib) and C (stdlib-only)."""
+
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+INSTALLED_PACKAGES_JSON: str = """${INSTALLED_PACKAGES_JSON}"""
+DIRECT_DEP_NAMES_JSON: str = """${DIRECT_DEP_NAMES_JSON}"""
+FORMAT: str = "${FORMAT}"
+OUTPUT: str = "${OUTPUT}"
+PKG_MANAGER: str = "${PKG_MANAGER}"
+ENV_NAME: str = "${ENV_NAME}"
+PROJECT_NAME: str = "${PROJECT_NAME}"
+PROJECT_VERSION: str = "${PROJECT_VERSION}"
+USE_STDLIB_ONLY: bool = "${USE_STDLIB_ONLY}".lower() == "true"
+
+
+def canonical(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def build_purl_str(pkg: dict) -> str:
+    name = canonical(pkg["name"])
+    raw_version = pkg.get("version")
+    if not raw_version and canonical(pkg["name"]) == canonical(PROJECT_NAME):
+        raw_version = PROJECT_VERSION
+    version = raw_version or ""
+    kind = pkg.get("kind", "")
+    channel = pkg.get("channel", "")
+    ver_suffix = f"@{version}" if version else ""
+    if PKG_MANAGER in ("pip", "uv") or kind == "pypi" or channel == "pypi":
+        return f"pkg:pypi/{name}{ver_suffix}"
+    if PKG_MANAGER in ("pixi", "conda"):
+        ns = channel if channel and channel != "pypi" else "conda-forge"
+        return f"pkg:conda/{ns}/{name}{ver_suffix}"
+    return f"pkg:generic/{name}{ver_suffix}"
+
+
+def generate_stdlib(installed: list[dict], direct_names: set[str]) -> None:
+    pname = PROJECT_NAME if PROJECT_NAME and "\${" not in PROJECT_NAME else ""
+    pver = PROJECT_VERSION if PROJECT_VERSION and "\${" not in PROJECT_VERSION else "0.0.0"
+    root_purl = f"pkg:pypi/{canonical(pname)}@{pver}" if pname else ""
+
+    components = []
+    for pkg in installed:
+        purl = build_purl_str(pkg)
+        is_direct = canonical(pkg["name"]) in direct_names
+        raw_ver = pkg.get("version")
+        if not raw_ver and canonical(pkg["name"]) == canonical(pname):
+            raw_ver = pver
+        components.append({
+            "type": "library",
+            "bom-ref": purl,
+            "name": pkg["name"],
+            "version": raw_ver or "",
+            "purl": purl,
+            "properties": [
+                {"name": "cdx:dependency:type", "value": "direct" if is_direct else "transitive"},
+                {"name": "cdx:package-manager", "value": PKG_MANAGER},
+                {"name": "cdx:environment", "value": ENV_NAME},
+            ],
+        })
+
+    direct_purls = [c["bom-ref"] for c in components if any(p["value"] == "direct" for p in c["properties"] if p["name"] == "cdx:dependency:type")]
+
+    metadata: dict = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tools": [{"vendor": "generate-python-sbom", "name": "generate-python-sbom", "version": "1.0.0"}],
+    }
+    if pname and root_purl:
+        metadata["component"] = {
+            "type": "application",
+            "bom-ref": root_purl,
+            "name": pname,
+            "version": pver,
+            "purl": root_purl,
+            "properties": [
+                {"name": "cdx:package-manager", "value": PKG_MANAGER},
+                {"name": "cdx:environment", "value": ENV_NAME},
+            ],
+        }
+
+    bom: dict = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.4",
+        "serialNumber": f"urn:uuid:{uuid.uuid4()}",
+        "version": 1,
+        "metadata": metadata,
+        "components": components,
+    }
+    if pname and root_purl:
+        bom["dependencies"] = [{"ref": root_purl, "dependsOn": direct_purls}]
+
+    output_path = Path(OUTPUT)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if FORMAT.lower() == "json":
+        output_path.write_text(json.dumps(bom, indent=2), encoding="utf-8")
+    else:
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<bom xmlns="http://cyclonedx.org/schema/bom/1.4"',
+            f'     serialNumber="{bom["serialNumber"]}" version="1">',
+            "  <components>",
+        ]
+        for c in components:
+            dep_type = next((p["value"] for p in c["properties"] if p["name"] == "cdx:dependency:type"), "transitive")
+            lines += [
+                f'    <component type="library">',
+                f'      <name>{c["name"]}</name>',
+                f'      <version>{c["version"]}</version>',
+                f'      <purl>{c["purl"]}</purl>',
+                f'      <properties>',
+                f'        <property name="cdx:dependency:type">{dep_type}</property>',
+                f'        <property name="cdx:environment">{ENV_NAME}</property>',
+                f'      </properties>',
+                f'    </component>',
+            ]
+        lines += ["  </components>", "</bom>"]
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+
+    total = len(components)
+    direct_count = sum(1 for c in components if any(p["value"] == "direct" for p in c["properties"] if p["name"] == "cdx:dependency:type"))
+    print(f"SBOM written: {output_path.resolve()}")
+    print(f"Schema: CycloneDX 1.4 ({FORMAT.upper()}) | Environment: {ENV_NAME}")
+    print(f"Components: {total} ({direct_count} direct, {total - direct_count} transitive)")
+
+
+def generate_with_lib(installed: list[dict], direct_names: set[str]) -> None:
+    try:
+        from cyclonedx.model.bom import Bom
+        from cyclonedx.model.component import Component, ComponentType
+        from cyclonedx.model import Property
+        from cyclonedx.output import make_outputter
+        from cyclonedx.schema import OutputFormat, SchemaVersion
+        from packageurl import PackageURL
+    except ImportError as exc:
+        print(f"cyclonedx-python-lib not importable ({exc}); falling back to stdlib generation")
+        generate_stdlib(installed, direct_names)
+        return
+
+    def to_purl(pkg: dict) -> PackageURL:
+        return PackageURL.from_string(build_purl_str(pkg))
+
+    bom = Bom()
+    bom.serial_number = uuid.uuid4()
+    for pkg in installed:
+        is_direct = canonical(pkg["name"]) in direct_names
+        props = [
+            Property(name="cdx:dependency:type", value="direct" if is_direct else "transitive"),
+            Property(name="cdx:package-manager", value=PKG_MANAGER),
+            Property(name="cdx:environment", value=ENV_NAME),
+        ]
+        component = Component(
+            type=ComponentType.LIBRARY,
+            name=pkg["name"],
+            version=pkg.get("version", ""),
+            purl=to_purl(pkg),
+            properties=props,
+        )
+        bom.components.add(component)
+
+    pname = PROJECT_NAME if PROJECT_NAME and "\${" not in PROJECT_NAME else ""
+    if pname:
+        pver = PROJECT_VERSION if PROJECT_VERSION and "\${" not in PROJECT_VERSION else "0.0.0"
+        bom.metadata.component = Component(type=ComponentType.APPLICATION, name=pname, version=pver)
+
+    output_format = OutputFormat.JSON if FORMAT.lower() == "json" else OutputFormat.XML
+    outputter = make_outputter(bom, output_format, SchemaVersion.V1_4)
+    output_path = Path(OUTPUT)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(outputter.output_as_string(indent=2), encoding="utf-8")
+
+    total = len(installed)
+    direct_count = sum(1 for p in installed if canonical(p["name"]) in direct_names)
+    print(f"SBOM written: {output_path.resolve()}")
+    print(f"Schema: CycloneDX 1.4 ({FORMAT.upper()}) | Environment: {ENV_NAME}")
+    print(f"Components: {total} ({direct_count} direct, {total - direct_count} transitive)")
+
+
+def main() -> None:
+    installed: list[dict] = json.loads(INSTALLED_PACKAGES_JSON)
+    direct_names: set[str] = {canonical(n) for n in json.loads(DIRECT_DEP_NAMES_JSON)}
+    if FORMAT.lower() == "json":
+        generate_stdlib(installed, direct_names)
+    elif USE_STDLIB_ONLY:
+        generate_stdlib(installed, direct_names)
+    else:
+        generate_with_lib(installed, direct_names)
+
+
+if __name__ == "__main__":
+    main()
+PYEOF
+"${SBOM_PYTHON}" "${TEMP_DIR}/generate_sbom.py"
+```
+
+> **Note on `\${`:** the two occurrences of `\${` in `generate_stdlib` and `generate_with_lib` are literal backslash-dollar inside the heredoc — they prevent bash from trying to expand `${` as variable references for the project-name/version guard strings inside the Python script. All other `${VAR}` occurrences are intentionally expanded by bash before the script is written.
+
+---
+
 ## Arguments
 
 `$ARGUMENTS` is parsed as: `[--path <project-dir>] [--format json|xml] [--output <path>] [--env <name>] [--include-dev]`
@@ -82,6 +362,11 @@ Assign `PKG_MANAGER` using this priority order (first match wins):
 
 If no manifest is found at `PROJECT_ROOT`, stop and tell the user. If `--path` was not supplied, suggest re-running with `--path <correct-dir>`. The presence or absence of tools on the system PATH does not affect execution — all tools are always bootstrapped fresh in Step 1b.
 
+```bash
+echo "SBOM_STATE: PROJECT_ROOT=${PROJECT_ROOT}"
+echo "SBOM_STATE: PKG_MANAGER=${PKG_MANAGER}"
+```
+
 ---
 
 ## Step 1b — Bootstrap tools to TEMP_DIR
@@ -112,6 +397,7 @@ trap '_sbom_cleanup' EXIT INT TERM QUIT
 TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sbom-bootstrap.XXXXXX")
 BOOTSTRAPPED_TOOLS=()
 CONDA_TEMP_PREFIXES=()   # tracks conda env prefixes for Step 7a cleanup
+echo "SBOM_STATE: TEMP_DIR=${TEMP_DIR}"
 
 Bootstrap the tool for `PKG_MANAGER` following the exact procedures in [`references/bootstrap-tools.md`](references/bootstrap-tools.md):
 
@@ -142,6 +428,8 @@ After bootstrapping, prepend the tool's `bin/` directory to `PATH` so all subseq
 
 ```bash
 export PATH="${TEMP_DIR}/uv/bin:${TEMP_DIR}/pixi/bin:${TEMP_DIR}/conda/bin:${PATH}"
+echo "SBOM_STATE: SBOM_PYTHON=${SBOM_PYTHON}"
+echo "SBOM_STATE: PATH_PREPENDED=true"
 ```
 
 ---
@@ -279,6 +567,12 @@ for root, dirs, files in os.walk(PROJECT_ROOT):
 
 Normalize all names to lowercase with hyphens (PEP 503): `re.sub(r"[-_.]+", "-", name).lower()`.
 
+After all manifests are parsed, print the count for state tracking:
+
+```python
+print(f"SBOM_STATE: DIRECT_DEPS_COUNT={len(DIRECT_DEPS)}")
+```
+
 ---
 
 ## Step 3 — Verify SBOM generation tooling
@@ -363,6 +657,10 @@ if SINGLE_ENV:
 else:
     OUTPUT = "${OUTPUT_BASE}.${name}.${FORMAT}"
     # e.g. sbom.cyclonedx.default.json, sbom.cyclonedx.py312.json
+```
+
+```bash
+echo "SBOM_STATE: env=${ENV_NAME} output=${OUTPUT}"
 ```
 
 ### 5a-pre — Create project environment in TEMP_DIR (pip / uv / conda)

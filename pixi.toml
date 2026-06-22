@@ -1,6 +1,6 @@
 [workspace]
 name = "generate-python-sbom-skill"
-version = "0.1.0"
+version = "0.9.0"
 description = "Portable skill for generating CycloneDX SBOMs for Python projects"
 authors = ["Kevin Mills <millsks@gmail.com>"]
 channels = ["conda-forge"]
