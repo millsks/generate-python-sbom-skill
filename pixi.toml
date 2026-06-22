@@ -1,0 +1,14 @@
+[workspace]
+name = "generate-python-sbom-skill"
+version = "0.1.0"
+description = "Portable skill for generating CycloneDX SBOMs for Python projects"
+authors = ["Kevin Mills <millsks@gmail.com>"]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64"]
+
+[dependencies]
+git-cliff = ">=2.0"
+gh = ">=2.94.0,<3"
+
+[tasks]
+changelog = { cmd = "git-cliff --tag \"$(date +%Y-%m-%d)\" -o CHANGELOG.md", description = "Regenerate CHANGELOG.md" }
