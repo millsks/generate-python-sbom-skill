@@ -13,4 +13,4 @@ pre-commit = ">=4.0"
 
 [tasks]
 bootstrap = { cmd = "pre-commit install && pre-commit install --hook-type commit-msg", description = "Install pre-commit hooks" }
-changelog = { cmd = "git-cliff --tag \"$(date +%Y-%m-%d)\" -o CHANGELOG.md", description = "Regenerate CHANGELOG.md" }
+changelog = { cmd = "git-cliff -o CHANGELOG.md", description = "Regenerate CHANGELOG.md from git tags" }
