@@ -1,0 +1,32 @@
+# uv configuration — community (PyPI / Astral) defaults
+# Reference: https://docs.astral.sh/uv/reference/settings/
+#
+# This file is written to ${TEMP_DIR}/uv/uv.toml before any uv invocation.
+# The env var UV_PROJECT_ENVIRONMENT is left unset so uv uses the venv
+# created inside TEMP_DIR. UV_CACHE_DIR is set to ${TEMP_DIR}/uv/cache
+# to prevent cache writes to the user's home directory.
+#
+# To adapt for a private / corporate environment:
+# - Change index.url to your internal PyPI mirror
+# - Add [[index]] entries for supplementary indexes
+# - Set keyring-provider if your registry requires credential helpers
+# - See references/installation-sources.md for the complete override guide
+
+[pip]
+# Primary package index
+index-url = "https://pypi.org/simple/"
+extra-index-url = []
+
+# Never resolve pre-release packages unless explicitly requested
+prerelease = "disallow"
+
+# Do not use cached wheels — always resolve fresh for SBOM accuracy
+no-cache = true
+
+[python]
+# Allow uv to manage Python installations
+downloads = true
+
+# Python version to use for SBOM generation and bootstrapped environments
+# Override with UV_PYTHON env var if a different version is needed
+# python = "3.13"

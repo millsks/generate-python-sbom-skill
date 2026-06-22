@@ -1,0 +1,35 @@
+# pixi configuration — community (conda-forge / PyPI) defaults
+# Reference: https://pixi.sh/latest/reference/pixi_configuration/
+#
+# This file is written to ${TEMP_DIR}/pixi/config.toml before any pixi invocation.
+# PIXI_HOME is set to ${TEMP_DIR}/pixi so pixi reads this config file and writes
+# all global state (envs, auth tokens, cache) inside TEMP_DIR.
+#
+# To adapt for a private / corporate environment:
+# - Add mirror entries under [mirrors] for conda-forge packages
+# - Change default-channels to internal channel URLs
+# - Set authentication tokens via [pypi-config] for private PyPI indexes
+# - See references/installation-sources.md for the complete override guide
+
+# Use the system certificate store for TLS (works on all platforms)
+tls-root-certs = "system"
+
+[default-channels]
+# Default conda channels used when no channels are specified in pixi.toml
+channels = ["conda-forge"]
+
+[mirrors]
+# Map public channels to internal mirrors — empty by default (use public conda-forge)
+# Example for corporate use:
+#   "https://conda.anaconda.org/conda-forge" = [
+#     { url = "https://conda.internal.corp/conda-forge" }
+#   ]
+
+[pypi-config]
+# PyPI index URL — defaults to the public PyPI
+index-url = "https://pypi.org/simple/"
+extra-index-urls = []
+
+[repodata-config]
+# Use JLAP incremental repodata updates for faster refreshes
+disable-jlap = false

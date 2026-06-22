@@ -1,0 +1,46 @@
+# conda configuration — community (conda-forge) defaults
+# Reference: https://docs.conda.io/projects/conda/en/latest/configuration.html
+#
+# This file is written to ${TEMP_DIR}/conda/.condarc before any conda invocation.
+# The env var CONDARC is set to this path so it overrides any user or
+# system .condarc already present on the machine. This ensures reproducible,
+# environment-independent behaviour.
+#
+# To adapt for a private / corporate environment:
+# - Replace channel entries with internal conda mirror URLs
+# - Set channel_alias to your organization's channel prefix
+# - Set ssl_verify to a CA bundle path if using an internal TLS proxy
+# - See references/installation-sources.md for the complete override guide
+
+# Channels searched in priority order (first match wins with strict priority)
+channels:
+  - conda-forge
+  - defaults
+
+# Strict channel priority: packages from higher-priority channels are always
+# preferred over lower-priority channels — prevents mixing package builds
+channel_priority: strict
+
+# Never auto-activate base — explicit activation only
+auto_activate_base: false
+
+# Always verify TLS certificates
+ssl_verify: true
+
+# Use the fast libmamba solver
+solver: libmamba
+
+# Pin conda package cache and env dirs inside TEMP_DIR (set at runtime)
+# These are overridden by conda invocations that pass --prefix, but explicit
+# paths here prevent accidental writes to the user's home directory
+pkgs_dirs:
+  - ${TEMP_CONDA_DIR}/pkgs
+
+envs_dirs:
+  - ${TEMP_CONDA_DIR}/envs
+
+# Show channel URLs in conda list output — useful for SBOM purl generation
+show_channel_urls: true
+
+# Disable analytics
+report_errors: false
