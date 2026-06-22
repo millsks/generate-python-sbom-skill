@@ -1,0 +1,148 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.4",
+  "serialNumber": "urn:uuid:b3a1c2d4-e5f6-7890-abcd-ef1234567890",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-06-22T14:32:11+00:00",
+    "tools": [
+      {
+        "vendor": "generate-python-sbom",
+        "name": "generate-python-sbom",
+        "version": "1.0.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:pypi/analyze-pipeline@0.3.1",
+      "name": "analyze-pipeline",
+      "version": "0.3.1",
+      "purl": "pkg:pypi/analyze-pipeline@0.3.1",
+      "properties": [
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/click@8.1.8",
+      "name": "click",
+      "version": "8.1.8",
+      "purl": "pkg:conda/conda-forge/click@8.1.8",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "direct" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/numpy@1.26.4",
+      "name": "numpy",
+      "version": "1.26.4",
+      "purl": "pkg:conda/conda-forge/numpy@1.26.4",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "direct" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/packaging@24.1",
+      "name": "packaging",
+      "version": "24.1",
+      "purl": "pkg:conda/conda-forge/packaging@24.1",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "transitive" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/pandas@2.2.1",
+      "name": "pandas",
+      "version": "2.2.1",
+      "purl": "pkg:conda/conda-forge/pandas@2.2.1",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "direct" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/python-dateutil@2.9.0post0",
+      "name": "python-dateutil",
+      "version": "2.9.0post0",
+      "purl": "pkg:conda/conda-forge/python-dateutil@2.9.0post0",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "transitive" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/pytz@2024.1",
+      "name": "pytz",
+      "version": "2024.1",
+      "purl": "pkg:conda/conda-forge/pytz@2024.1",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "transitive" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/six@1.16.0",
+      "name": "six",
+      "version": "1.16.0",
+      "purl": "pkg:conda/conda-forge/six@1.16.0",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "transitive" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/structlog@24.1.0",
+      "name": "structlog",
+      "version": "24.1.0",
+      "purl": "pkg:conda/conda-forge/structlog@24.1.0",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "direct" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:conda/conda-forge/tzdata@2024a",
+      "name": "tzdata",
+      "version": "2024a",
+      "purl": "pkg:conda/conda-forge/tzdata@2024a",
+      "properties": [
+        { "name": "cdx:dependency:type", "value": "transitive" },
+        { "name": "cdx:package-manager", "value": "pixi" },
+        { "name": "cdx:environment", "value": "default" }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:pypi/analyze-pipeline@0.3.1",
+      "dependsOn": [
+        "pkg:conda/conda-forge/click@8.1.8",
+        "pkg:conda/conda-forge/numpy@1.26.4",
+        "pkg:conda/conda-forge/pandas@2.2.1",
+        "pkg:conda/conda-forge/structlog@24.1.0"
+      ]
+    }
+  ]
+}
