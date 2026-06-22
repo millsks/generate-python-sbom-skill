@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 1.0.0)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        type: boolean
+        default: false
+      force_recreate:
+        description: "Remove existing tag/release if it exists before creating new one"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Get latest tag
+        id: get_tag
+        run: |
+          git fetch --tags
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo no_tag_found)
+          echo "tag=${latest_tag}" >> "$GITHUB_OUTPUT"
+          if [ "$latest_tag" != "no_tag_found" ]; then
+            echo "has_tags=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_tags=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute next tag
+        id: next_tag
+        run: |
+          if [ "${{ steps.get_tag.outputs.has_tags }}" = "true" ]; then
+            base_tag="${{ steps.get_tag.outputs.tag }}"
+            base_tag="${base_tag#v}"
+            IFS='.' read -r major minor patch << EOF
+          ${base_tag}
+          EOF
+            patch=$((patch + 1))
+            next_tag="${major}.${minor}.${patch}"
+          else
+            next_tag="0.1.0"
+          fi
+          echo "NEXT_TAG=${next_tag}" >> "$GITHUB_ENV"
+          echo "next_tag=${next_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Check for changes since last tag
+        id: check_changes
+        run: |
+          if [ "${{ steps.get_tag.outputs.has_tags }}" == "false" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet ${{ steps.get_tag.outputs.tag }} HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip release (no changes)
+        id: should_skip
+        run: |
+          if [ "${{ steps.check_changes.outputs.changed }}" == "false" ]; then
+            echo "::notice::No changes detected since last release. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup pixi
+        if: steps.should_skip.outputs.skip != 'true'
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: latest
+
+      - name: Set release tag
+        id: set_release_tag
+        if: steps.should_skip.outputs.skip != 'true'
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            new_tag="${{ inputs.version }}"
+          else
+            new_tag="${{ steps.next_tag.outputs.next_tag }}"
+          fi
+          echo "NEW_TAG=${new_tag}" >> "$GITHUB_ENV"
+          echo "new_tag=${new_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate version format
+        if: steps.should_skip.outputs.skip != 'true'
+        run: |
+          if ! echo "${{ env.NEW_TAG }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$'; then
+            echo "Invalid version format: ${{ env.NEW_TAG }}. Expected semantic versioning (e.g., 1.0.0)"
+            exit 1
+          fi
+
+      - name: Check if version already exists
+        if: steps.should_skip.outputs.skip != 'true'
+        run: |
+          if git tag | grep -q "^v${{ env.NEW_TAG }}$"; then
+            if [ "${{ inputs.force_recreate }}" = "true" ]; then
+              echo "Version v${{ env.NEW_TAG }} exists but force_recreate is enabled"
+            else
+              echo "Version v${{ env.NEW_TAG }} already exists. Use force_recreate to override."
+              exit 1
+            fi
+          fi
+
+      - name: Remove existing tag and release (if force_recreate)
+        if: steps.should_skip.outputs.skip != 'true' && inputs.force_recreate == true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          VERSION="v${{ env.NEW_TAG }}"
+          git push origin --delete "${VERSION}" || true
+          git tag -d "${VERSION}" || true
+          gh release delete "${VERSION}" --yes || true
+
+      - name: Create temporary tag for changelog generation
+        if: steps.should_skip.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ env.NEW_TAG }}" -m "Release v${{ env.NEW_TAG }}"
+
+      - name: Generate changelog
+        if: steps.should_skip.outputs.skip != 'true'
+        run: pixi run changelog
+
+      - name: Extract release notes
+        if: steps.should_skip.outputs.skip != 'true'
+        run: pixi run -- git-cliff --current --strip all > /tmp/release_notes.md
+
+      - name: Commit changelog and recreate tag
+        if: steps.should_skip.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -d "v${{ env.NEW_TAG }}"
+          git add CHANGELOG.md
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(release): prepare for v${{ env.NEW_TAG }}"
+          fi
+          git tag -a "v${{ env.NEW_TAG }}" -m "Release v${{ env.NEW_TAG }}"
+          git push origin main --tags
+
+      - name: Create GitHub Release
+        if: steps.should_skip.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.NEW_TAG }}
+          name: Release v${{ env.NEW_TAG }}
+          body_path: /tmp/release_notes.md
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease }}
+          token: ${{ steps.app-token.outputs.token }}
