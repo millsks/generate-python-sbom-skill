@@ -9,6 +9,8 @@ platforms = ["osx-arm64", "osx-64", "linux-64"]
 [dependencies]
 git-cliff = ">=2.0"
 gh = ">=2.94.0,<3"
+pre-commit = ">=4.0"
 
 [tasks]
+bootstrap = { cmd = "pre-commit install && pre-commit install --hook-type commit-msg", description = "Install pre-commit hooks" }
 changelog = { cmd = "git-cliff --tag \"$(date +%Y-%m-%d)\" -o CHANGELOG.md", description = "Regenerate CHANGELOG.md" }
