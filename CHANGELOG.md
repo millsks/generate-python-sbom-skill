@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initialize repository with LICENSE, .gitignore, and README stub
 - Scaffold pixi workspace with git-cliff dependency
 - Add pre-commit with conventional-commit and file-quality hooks
+- Add date to changelog version header and simplify changelog task
+- Add manual release workflow
 
 ### ⭐ Features
 
